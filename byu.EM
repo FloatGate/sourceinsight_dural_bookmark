@@ -50,10 +50,34 @@ macro byu_get_basename(p)
 	return result
 }
 
+// this function just test the symbol support of si
+macro byu_test () 
+{
+	var foo
+	var bar
+	var lineNum
+	var index
+	var buf
+	buf = GetCurrentBuf()
+	lineNum = GetBufLnCur(buf)
+	index = byu_get_cur_cursor_index_for_cur_line()
+	bar = GetSymbolFromCursor(buf, lineNum, index)
+	if (bar == "")
+		stop
+		
+	Msg(bar.Symbol)
+	foo = SymbolParent(bar)
+	if (foo != "")
+		Msg(foo.Symbol)
+	else
+		Msg("no parent")
+	stop
+}
+
 macro byu_set_bookmarks_buf_current ()
 {
 	var file
-	file = "byu_macros.EM"
+	file = "byu_macros.EM" // TODO: hard code change
 	var handle
 	handle = OpenBuf(file)
 	if (handle == hNil) {
@@ -234,7 +258,7 @@ macro byu_check_for_position_file (buf)
 		ret = False
 		return ret
 	}
-	
+	/*
 	var lineNum
 	lineNum = GetBufLnCur(buf)
 	var code
@@ -244,6 +268,7 @@ macro byu_check_for_position_file (buf)
 		Msg("Line start with white space!")
 		ret = False
 	}
+	*/
 	
 	return ret
 }
@@ -281,8 +306,71 @@ macro byu_scroll_down_half_screen ()
 	stop
 }
 
+macro byu_cur_record_lines (move_to_head)
+{
+	var buf
+	buf = GetCurrentBuf()
+	var fName
+	fName = getBufName(buf)
+
+	if (!byu_check_for_position_file(buf))
+		stop
+
+	var lineNum
+	lineNum = GetBufLnCur(buf)
+	var totalLines
+	totalLines = GetBufLineCount(buf)
+	
+	if (lineNum == totalLines)
+		lineNum = lineNum - 1 // for deleting the last record
+		
+	var line
+	line = GetBufLine(buf, lineNum)
+	var count
+	count = 0
+	var i 
+	i = 0
+
+	// if we are in the middle of the record, check for upward first
+	while (byu_test_str_start_with_padding(line) && lineNum - i > 0)
+	{
+		i = i + 1 
+		if (move_to_head)
+			Cursor_Up
+		line = GetBufLine(buf, lineNum - i)
+	}
+
+	while (!byu_test_str_start_with_padding(line))
+	{
+		i = i + 1
+		if (lineNum - i == -1)
+			break
+		if (move_to_head)
+			Cursor_Up
+		line = GetBufLine(buf, lineNum - i)
+	}
+
+	if (move_to_head && lineNum - i != -1)
+		Cursor_down
+	
+	var recordStartLine
+	recordStartLine = lineNum - i + 1 // caculate the real current record start number
+	i = 0
+	line = GetBufLine(buf, recordStartLine + i)
+	while (!byu_test_str_start_with_padding(line) && recordStartLine + i  <= totalLines)
+	{
+		i = i + 1
+		line = GetBufLine(buf, recordStartLine + i)
+	}
+	
+	return i + 2 // add the file name and line number, two more lines
+}
+
 macro byu_del_cur_item ()
 {
+	global del_name
+	global del_file
+	global del_line
 	var buf
 	buf = GetCurrentBuf()
 	var fName
@@ -293,18 +381,57 @@ macro byu_del_cur_item ()
 		
 	var lineNum
 	lineNum = GetBufLnCur(buf)
-	DelBufLine(buf, lineNum)	// for the mark code
-	DelBufLine(buf, lineNum)	// for the file name
-	DelBufLine(buf, lineNum)	// for the line number
 
-	var totalLines
-	totalLines = GetBufLineCount(buf)
-	if (lineNum == totalLines && lineNum > 0)
-	{
-		Cursor_Up
-		Cursor_Up
-	}
+	/* as now the record lines are no more 3 lines, so this cannot work
+	// save this for yanking
+	del_name = GetBufLine(buf, lineNum)
+	del_file = GetBufLine(buf, lineNum + 1)
+	del_line = GetBufLine(buf, lineNum + 2)
+	*/
 	
+	var recordLines
+	recordLines = byu_cur_record_lines(1)
+	lineNum = GetBufLnCur(buf)
+	while (recordLines > 0)
+	{
+		DelBufLine(buf, lineNum)
+		recordLines = recordLines - 1
+	}
+	byu_cur_record_lines(1)
+	stop
+}
+
+// this command combined with the `byu_del_cur_item` to make the reoranize the items easier
+macro byu_yank_item ()
+{
+	stop // not work now, as record lines are no more 3/fixed lines
+	global del_name
+	global del_file
+	global del_line
+	var buf
+	buf = GetCurrentBuf()
+	var fName
+	fName = getBufName(buf)
+
+	if (!byu_check_for_position_file(buf))
+		stop
+
+	var curLine
+	curLine = GetBufLnCur(buf)
+	var totoalLines
+	totalLines = GetBufLineCount(buf)
+	if (curLine >= totalLines - 3)
+	{
+		AppendBufLine(buf, del_name)
+		AppendBufLine(buf, del_file)
+		AppendBufLine(buf, del_line)
+	} else
+	{
+		curLine = curLine + 3 // move forward this record
+		InsBufLine(buf, curLine, del_line)
+		InsBufLine(buf, curLine, del_file)
+		InsBufLine(buf, curLine, del_name)
+	}
 	stop
 }
 
@@ -316,6 +443,10 @@ macro byu_goto_cur_item ()
 	fName = getBufName(buf)
 	var positionFileName
 	positionFileName = "byu_macros.EM"
+	global padding
+	padding = "--                                                                                                  "
+	var oldPadding
+	oldPadding = "                                                                                                    "
 	
 	if (byu_get_basename(fName) != positionFileName) {
 		Cursor_Down
@@ -328,9 +459,24 @@ macro byu_goto_cur_item ()
 	var lineNum
 	lineNum = GetBufLnCur(buf)
 	var targetFile
-	targetFile = byu_skip_count(GetBufLine(buf, lineNum + 1), 100)
+	lineNum = lineNum + 1
+	while (1)
+	{
+		targetFile = GetBufLine(buf, lineNum)
+		if (strlen(targetFile) > 100)
+		{
+			var firstHundred
+			firstHundred = strtrunc(targetFile, 100)
+			if (firstHundred == padding || firstHundred == oldPadding)
+				break
+		}
+		
+		lineNum = lineNum + 1
+	}
+	targetFile = byu_skip_count(targetFile, 100)
+	lineNum = lineNum + 1
 	var targetFileLine
-	targetFileLine = byu_skip_count(GetBufLine(buf, lineNum + 2), 100)
+	targetFileLine = byu_skip_count(GetBufLine(buf, lineNum), 100)
 
 	var targetHandle
 	targetHandle = OpenBuf(targetFile)
@@ -379,6 +525,29 @@ macro byu_goto_cur_item ()
 	stop
 }
 
+macro byu_test_str_start_with_padding (str)
+{
+	var result
+	result = False
+
+	if (strlen(str) < 100)
+		return False
+
+	var head
+	head = strtrunc(str, 100)
+
+	var padding
+	padding = "--                                                                                                  "
+	var oldPadding
+	oldPadding = "                                                                                                    "
+	if (head == padding || head == oldPadding)
+		result = True
+		
+	return result
+}
+
+// TODO:
+// the prev_item and next_item can be simplied much after adding the function byu_cur_record_lines
 macro byu_goto_prev_item ()
 {
 	var buf
@@ -388,13 +557,64 @@ macro byu_goto_prev_item ()
 
 	if (!byu_check_for_position_file(buf)) 
 		stop
+		
 	var lineNum
 	lineNum = GetBufLnCur(buf)
+	
 	if (lineNum >= 3)
 	{
-		Cursor_Up
-		Cursor_Up
-		Cursor_Up
+		// lineNum = lineNum - 1 // move upward one line, pointing to line number
+		var line
+
+		// this while loop will move up the current item
+		while (1)
+		{
+			line = GetBufLine(buf, lineNum)
+
+			if (byu_test_str_start_with_padding(line))
+				break
+				
+			Cursor_Up
+
+			lineNum = lineNum - 1
+			if (lineNum == 0)
+				stop
+		}
+
+		// this while loop will move up the line number and file name
+		while (1)
+		{
+			line = GetBufLine(buf, lineNum)
+
+			if (!byu_test_str_start_with_padding(line))
+			{
+				break
+			}
+			
+			Cursor_Up	
+			lineNum = lineNum - 1
+			
+			if (lineNum == 0)
+				stop
+		}
+
+		// this while loop will move to the first line of the wanted record
+		while (1)
+		{
+			line = GetBufLine(buf, lineNum)
+
+			if (byu_test_str_start_with_padding(line))
+				break
+				
+			Cursor_Up
+
+			lineNum = lineNum - 1
+			
+			if (lineNum == 0)
+				stop
+		}
+
+		Cursor_Down  // move down one line
 	}
 }
 
@@ -418,6 +638,7 @@ macro byu_goto_line_end ()
 	
 	stop
 }
+
 macro byu_goto_next_item ()
 {
 	var buf
@@ -441,14 +662,48 @@ macro byu_goto_next_item ()
 	lineNum = GetBufLnCur(buf)
 	var totalLines
 	totalLines = GetBufLineCount(buf)
-	if (lineNum < totalLines - 3)
+	if (lineNum < totalLines)
 	{
-		Cursor_Down
-		Cursor_Down
-		Cursor_Down
+		// lineNum = lineNum - 1 // move upward one line, pointing to line number
+		var line
+
+		// this while loop will move down the current item
+		while (1)
+		{
+			line = GetBufLine(buf, lineNum)
+
+			if (byu_test_str_start_with_padding(line))
+				break
+				
+			Cursor_Down
+
+			lineNum = lineNum + 1
+			if (lineNum == totalLines)
+				stop
+		}
+
+		// this while loop will move down the line number and file name
+		while (1)
+		{
+			line = GetBufLine(buf, lineNum)
+
+			if (!byu_test_str_start_with_padding(line))
+			{
+				break
+			}
+			
+			Cursor_Down	
+			lineNum = lineNum + 1
+			
+			if (lineNum == totalLines)
+				stop
+		}
 	}
 }
 
+// TODO:
+// this will go to the last line of the record(if the record is just one line, then it is ok)
+// means this is still for the 3 lines fixed format
 macro byu_goto_last_item ()
 {
 	var buf
@@ -456,8 +711,8 @@ macro byu_goto_last_item ()
 	var fName
 	fName = getBufName(buf)
 
-	if (!byu_check_for_position_file(buf)) 
-		stop
+	//if (!byu_check_for_position_file(buf)) 
+	//	stop
 
 	var totalLines
 	totalLines = GetBufLineCount(buf)
@@ -472,6 +727,15 @@ macro byu_goto_last_item ()
 			Cursor_Down
 			count = count - 1
 		}
+	} else
+	{
+		var movUpCount
+		movUpCount = curLine - totalLines + 3
+		while (movUpCount > 0)
+		{
+			Cursor_Up
+			movUpCount = movUpCount - 1
+		}
 	}
 	
 	stop
@@ -484,10 +748,11 @@ macro byu_mark_this_line ()
 	var liNum
 	var macrosName
 	var handle 
-	var padding
+	global padding
 
 	// give the file name and line number 100 numbers of space to let reader focus on the marked content
-	padding = "                                                                                                    "
+	padding = "--                                                                                                  "
+	
 	var l
 	l = strlen(padding)
 	
@@ -509,6 +774,22 @@ macro byu_mark_this_line ()
 		Msg("No content to mark!")
 		stop
 	}
+	/*
+	if (strlen(line) > 80)
+		line = strtrunc(line, 80)
+	else
+	{
+		var padCount
+		padCount = 79 - strlen(line)
+		while (padCount > 0)
+		{
+			line = cat(line, " ")
+			padCount = padCount - 1
+		}
+		line = cat(line, ";")
+	}
+	*/
+	
 	AppendBufLine(handle, line)
 	AppendBufLine(handle, cat(padding, byu_get_basename(fileName)))
 	AppendBufLine(handle, cat(padding, liNum))
