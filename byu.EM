@@ -368,9 +368,7 @@ macro byu_cur_record_lines (move_to_head)
 
 macro byu_del_cur_item ()
 {
-	global del_name
-	global del_file
-	global del_line
+
 	var buf
 	buf = GetCurrentBuf()
 	var fName
@@ -380,34 +378,50 @@ macro byu_del_cur_item ()
 		stop
 		
 	var lineNum
-	lineNum = GetBufLnCur(buf)
-
-	/* as now the record lines are no more 3 lines, so this cannot work
-	// save this for yanking
-	del_name = GetBufLine(buf, lineNum)
-	del_file = GetBufLine(buf, lineNum + 1)
-	del_line = GetBufLine(buf, lineNum + 2)
-	*/
-	
+	lineNum = GetBufLnCur(buf)	
 	var recordLines
 	recordLines = byu_cur_record_lines(1)
 	lineNum = GetBufLnCur(buf)
+
+	global saveHandle 
+	saveHandle = OpenBuf("byu_save_del_lines")
+
+	if (savehandle == hNil)
+	{
+		Msg("del save file created")
+		saveHandle = NewBuf("byu_save_del_lines")
+	}
+	else 
+	{
+		var i
+		i = 0
+		var lines
+		lines = GetBufLineCount(saveHandle)
+		while (i < lines)
+		{
+			DelBufLine(saveHandle, 0)
+			i = i + 1
+		}
+	}
+	//Msg(saveHandle)
 	while (recordLines > 0)
 	{
+		var line
+		line = GetBufLine(buf, lineNum)
+		AppendBufLine(saveHandle, line)
 		DelBufLine(buf, lineNum)
 		recordLines = recordLines - 1
 	}
 	byu_cur_record_lines(1)
+	SaveBuf(saveHandle)
+	SaveBuf(buf)
 	stop
 }
 
 // this command combined with the `byu_del_cur_item` to make the reoranize the items easier
 macro byu_yank_item ()
 {
-	stop // not work now, as record lines are no more 3/fixed lines
-	global del_name
-	global del_file
-	global del_line
+	global delLines
 	var buf
 	buf = GetCurrentBuf()
 	var fName
@@ -416,22 +430,44 @@ macro byu_yank_item ()
 	if (!byu_check_for_position_file(buf))
 		stop
 
+	var curRecordLines
+	curRecordLines = byu_cur_record_lines(1)
+	//byu_goto_next_item()  // why this cannot work?
+	
 	var curLine
 	curLine = GetBufLnCur(buf)
-	var totoalLines
+	var totalLines
 	totalLines = GetBufLineCount(buf)
-	if (curLine >= totalLines - 3)
+
+	var toLine
+	toLine = curLine + curRecordLines
+	global saveHandle
+	saveHandle = OpenBuf("byu_save_del_lines")
+	if (saveHandle == hNil)
 	{
-		AppendBufLine(buf, del_name)
-		AppendBufLine(buf, del_file)
-		AppendBufLine(buf, del_line)
-	} else
-	{
-		curLine = curLine + 3 // move forward this record
-		InsBufLine(buf, curLine, del_line)
-		InsBufLine(buf, curLine, del_file)
-		InsBufLine(buf, curLine, del_name)
+		stop
 	}
+	var i
+	i = 0
+	var lines
+	lines = GetBufLineCount(saveHandle)
+
+	if (toLine == totalLines)
+	{
+		AppendBufLine(buf, "")
+	}
+	
+	while (lines > 0)
+	{
+		var line
+		line = GetBufLine(saveHandle, lines - 1)
+
+		InsBufLine(buf, toLine, line)
+		
+		lines = lines - 1
+	}
+	SaveBuf(savehandle)
+	SaveBuf(buf)
 	stop
 }
 
@@ -699,6 +735,26 @@ macro byu_goto_next_item ()
 				stop
 		}
 	}
+	stop
+}
+
+macro byu_goto_first_item ()
+{
+	var buf
+	buf = GetCurrentBuf()
+
+	if (!byu_check_for_position_file(buf))
+		stop
+
+	var curLine
+	curLine = GetBufLnCur(buf)
+	while (curLine > 0)
+	{
+		Cursor_Up
+		curLine = curLine - 1
+	}
+
+	stop
 }
 
 // TODO:
@@ -708,11 +764,9 @@ macro byu_goto_last_item ()
 {
 	var buf
 	buf = GetCurrentBuf()
-	var fName
-	fName = getBufName(buf)
 
-	//if (!byu_check_for_position_file(buf)) 
-	//	stop
+	if (!byu_check_for_position_file(buf)) 
+		stop
 
 	var totalLines
 	totalLines = GetBufLineCount(buf)
