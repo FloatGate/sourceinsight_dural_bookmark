@@ -1,6 +1,55 @@
 // God , script of source insight has so limited support for string operation
 // and don't allow the variable declarition with assignment!
 
+// configure the file names as you want to save the permanent bookmarks
+macro byu_get_bookmarks_file_name()
+{
+	return "byu_macros.EM"
+}
+
+macro byu_get_bookmarks_group_file_name ()
+{
+	return "byu_macros_group.EM"
+}
+
+macro byu_is_file_special(f)
+{
+	return f == byu_get_bookmarks_file_name() || 
+		f == byu_get_bookmarks_group_file_name()
+}
+
+macro byu_assert(test, msg)
+{
+	if (!test)
+	{
+		Msg(msg)
+		stop
+	}
+}
+
+macro byu_open_or_create (f)
+{
+	var handle
+	handle = OpenBuf(f)
+	if (handle == hNil)
+	{
+		handle = NewBuf(f)
+		SaveBuf(handle)
+	}
+
+	return handle
+}
+
+macro byu_get_group_token()
+{
+	return "<macro >"
+}
+
+macro byu_get_group_end_token()
+{
+	return "<macro end>"
+}
+
 //  s/"/'/
 macro byu_str_process (s) 
 {
@@ -21,6 +70,7 @@ macro byu_str_process (s)
 
 	return s
 }
+
 
 // give it the argument like "C:\a\b\c"
 // output "c"
@@ -50,9 +100,131 @@ macro byu_get_basename(p)
 	return result
 }
 
+macro byu_move_Cursor(count, down)
+{
+	while (count > 0)
+	{
+		if (down)
+			Cursor_Down
+		else
+			Cursor_Up
+		count = count - 1
+	}
+}
+
+macro byu_goto_line(target) {
+	var buf
+	buf = GetCurrentBuf()
+	var curLine
+	curLine = GetBufLnCur(buf)
+
+	if (curLine < target)
+	{
+		var moveDownLines
+		moveDownLines = target - curLine
+		byu_move_Cursor(moveDownLines, 1)
+	} else
+	{
+		var moveUpLines
+		moveUpLines = curLine - target
+		byu_move_Cursor(moveUpLines, 0)
+	}
+}
+
+// why not use "byu_goto_prev_item"
+// the answer is to find out the difference between "return" and "stop"
+//
+// UPDATE: I have modified the function "byu_goto_prev_item and next_item", remove the "stop"
+// to make it composable into other functions
+macro byu_move_cursor_uplevel(buf)
+{
+	byu_cur_record_lines(1)
+	var lineNum
+	lineNum = GetBufLnCur(buf)
+	if (lineNum == 0)
+		return
+
+	Cursor_Up
+	byu_cur_record_lines(1)
+}
+
+macro byu_move_cursor_downlevel (buf)
+{
+	var lines
+	lines = byu_cur_record_lines(1)
+	var totalLines
+	totalLines = GetBufLineCount(buf)
+	var lineNum
+	lineNum = GetBufLnCur(buf)
+	if (lineNum + lines == totalLines)
+	{
+		return
+	}
+
+	byu_move_Cursor(lines, 1)
+}
+macro byu_get_grp_name(ln)
+{
+	var grpToken
+	grpToken = byu_get_group_token()
+	if (strlen(ln) <= strlen(grpToken))
+	{
+		Msg("No group name provided!")
+		return ""
+	}
+	var tmp
+	tmp = byu_skip_count(ln, strlen("<macro "))
+	tmp = strtrunc(tmp, strlen(tmp) - 1) // strip the last ">"
+	return tmp
+}
+
+macro byu_str_starts_with (str, head)
+{
+	if (strlen(str) < strlen(head))
+		return False
+
+	var s
+	s = strtrunc(str, strlen(head))
+
+	return s == head
+}
+
+macro byu_test_str_start_with_padding (str)
+{
+	var padding
+	padding = "--                                                                                                  "
+	var oldPadding // for history reason
+	oldPadding = "                                                                                                    "
+
+	return byu_str_starts_with(str, padding) || byu_str_starts_with(str, oldPadding)
+}
+
+macro byu_add_grp(grpName, line)
+{
+	var buf
+	buf = byu_open_or_create(byu_get_bookmarks_group_file_name())
+	AppendBufLine(buf, byu_skip_whitespace(grpName))
+	var padding
+	padding = "--                                                                                                  "
+	AppendBufLine(buf, cat(padding, byu_get_bookmarks_file_name()))
+	AppendBufLine(buf, cat(padding, line))
+	SaveBuf(buf)
+}
+
+macro byu_open_grp_file ()
+{
+	var buf
+	buf = byu_open_or_create(byu_get_bookmarks_group_file_name())
+	SetCurrentBuf(buf)
+}
+
 // this function just test the symbol support of si
 macro byu_test () 
 {
+	global noThis
+	if (noThis == "")
+		Msg(noThis)
+	stop
 	var foo
 	var bar
 	var lineNum
@@ -76,17 +248,8 @@ macro byu_test ()
 
 macro byu_set_bookmarks_buf_current ()
 {
-	var file
-	file = "byu_macros.EM" // TODO: hard code change
-	var handle
-	handle = OpenBuf(file)
-	if (handle == hNil) {
-		handle = NewBuf(file)
-		CloseBuf(handle)
-		handle = OpenBuf(file)
-	}
-	SetCurrentBuf(handle)
-	stop
+	SetCurrentBuf(byu_open_or_create(byu_get_bookmarks_file_name()))
+	
 }
 
 macro byu_skip_whitespace(str)
@@ -251,10 +414,11 @@ macro byu_check_for_position_file (buf)
 	var fName
 	fName = getBufName(buf)
 	var positionFileName
-	positionFileName = "byu_macros.EM"
+	positionFileName = byu_get_bookmarks_file_name()
 	
-	if (byu_get_basename(fName) != positionFileName) {
-		Msg("This command only apply to @positionFileName@ file!")
+	if (byu_get_basename(fName) != positionFileName && 
+		byu_get_basename(fName) != byu_get_bookmarks_group_file_name()) {
+		Msg("This command only apply to bookmark/group file!")
 		ret = False
 		return ret
 	}
@@ -308,6 +472,22 @@ macro byu_scroll_down_half_screen ()
 
 macro byu_cur_record_lines (move_to_head)
 {
+	return byu_cur_record_lines_internal(move_to_head, 0, 0)
+	
+}
+
+macro byu_get_record_lines_at (line)
+{
+	return byu_cur_record_lines_internal(0, 1, line)
+}
+
+// move_to_head: if True, it will move to the head of the record
+// curRecFirLine: if not -1, it will provide the first line number of the record, then 
+// 			we will caculate the record size which starts at that line
+//
+// You can not specify both as (1, 20)
+macro byu_cur_record_lines_internal (move_to_head, notCurRec, curRecFirLine)
+{
 	var buf
 	buf = GetCurrentBuf()
 	var fName
@@ -315,6 +495,12 @@ macro byu_cur_record_lines (move_to_head)
 
 	if (!byu_check_for_position_file(buf))
 		stop
+
+	if (move_to_head && notCurRec)
+	{
+		Msg("byu_cur_record_lines arg wrong!")
+		stop
+	}
 
 	var lineNum
 	lineNum = GetBufLnCur(buf)
@@ -331,30 +517,39 @@ macro byu_cur_record_lines (move_to_head)
 	var i 
 	i = 0
 
-	// if we are in the middle of the record, check for upward first
-	while (byu_test_str_start_with_padding(line) && lineNum - i > 0)
+	if (!notCurRec)
 	{
-		i = i + 1 
-		if (move_to_head)
-			Cursor_Up
-		line = GetBufLine(buf, lineNum - i)
-	}
+		// if we are in the middle of the record, check for upward first
+		while (byu_test_str_start_with_padding(line) && lineNum - i > 0)
+		{
+			i = i + 1 
+			if (move_to_head)
+				Cursor_Up
+			line = GetBufLine(buf, lineNum - i)
+		}
 
-	while (!byu_test_str_start_with_padding(line))
-	{
-		i = i + 1
-		if (lineNum - i == -1)
-			break
-		if (move_to_head)
-			Cursor_Up
-		line = GetBufLine(buf, lineNum - i)
-	}
+		while (!byu_test_str_start_with_padding(line))
+		{
+			i = i + 1
+			if (lineNum - i == -1)
+				break
+			if (move_to_head)
+				Cursor_Up
+			line = GetBufLine(buf, lineNum - i)
+		}
 
-	if (move_to_head && lineNum - i != -1)
-		Cursor_down
+		if (move_to_head && lineNum - i != -1)
+			Cursor_down
+	}
 	
 	var recordStartLine
-	recordStartLine = lineNum - i + 1 // caculate the real current record start number
+	if (!notCurRec)
+		recordStartLine = lineNum - i + 1 // caculate the real current record start number
+	else
+	{
+		recordStartLine = curRecFirLine
+	}
+		
 	i = 0
 	line = GetBufLine(buf, recordStartLine + i)
 	while (!byu_test_str_start_with_padding(line) && recordStartLine + i  <= totalLines)
@@ -474,38 +669,23 @@ macro byu_yank_item ()
 macro byu_goto_cur_item ()
 {
 	var buf
-	buf = GetCurrentBuf()
-	var fName
-	fName = getBufName(buf)
-	var positionFileName
-	positionFileName = "byu_macros.EM"
-	global padding
-	padding = "--                                                                                                  "
-	var oldPadding
-	oldPadding = "                                                                                                    "
-	
-	if (byu_get_basename(fName) != positionFileName) {
-		Cursor_Down
-		stop
-	}
+	buf = GetCurrentBuf()	
 
 	if (!byu_check_for_position_file(buf)) 
 		stop
-		
+
+	byu_cur_record_lines(1)
+	
 	var lineNum
 	lineNum = GetBufLnCur(buf)
+	var totalLines
+	totalLines = GetBufLineCount(buf)
 	var targetFile
-	lineNum = lineNum + 1
-	while (1)
+	while (lineNum < totalLines)
 	{
 		targetFile = GetBufLine(buf, lineNum)
-		if (strlen(targetFile) > 100)
-		{
-			var firstHundred
-			firstHundred = strtrunc(targetFile, 100)
-			if (firstHundred == padding || firstHundred == oldPadding)
-				break
-		}
+		if (byu_test_str_start_with_padding(targetFile))
+			break
 		
 		lineNum = lineNum + 1
 	}
@@ -517,7 +697,7 @@ macro byu_goto_cur_item ()
 	var targetHandle
 	targetHandle = OpenBuf(targetFile)
 	if (targetHandle == hNil) {
-		Msg("@targetFile@ doesn't open")
+		Msg("@targetFile@ doesn't exist")
 		stop
 	}
 
@@ -561,26 +741,6 @@ macro byu_goto_cur_item ()
 	stop
 }
 
-macro byu_test_str_start_with_padding (str)
-{
-	var result
-	result = False
-
-	if (strlen(str) < 100)
-		return False
-
-	var head
-	head = strtrunc(str, 100)
-
-	var padding
-	padding = "--                                                                                                  "
-	var oldPadding
-	oldPadding = "                                                                                                    "
-	if (head == padding || head == oldPadding)
-		result = True
-		
-	return result
-}
 
 // TODO:
 // the prev_item and next_item can be simplied much after adding the function byu_cur_record_lines
@@ -682,14 +842,12 @@ macro byu_goto_next_item ()
 	var fName
 	fName = getBufName(buf)
 
-	//if (!byu_check_for_position_file(buf)) 
-	//	stop
 	
 	var positionFileName
-	positionFileName = "byu_macros.EM"
+	positionFileName = byu_get_bookmarks_file_name()
 
 	// this will renuse the same short cut key
-	if (byu_get_basename(fName) != positionFileName) {
+	if (!byu_is_file_special(byu_get_basename(fName))) {
 		byu_mv_next_word()
 		stop
 	}	
@@ -715,7 +873,7 @@ macro byu_goto_next_item ()
 
 			lineNum = lineNum + 1
 			if (lineNum == totalLines)
-				stop
+				break
 		}
 
 		// this while loop will move down the line number and file name
@@ -732,10 +890,10 @@ macro byu_goto_next_item ()
 			lineNum = lineNum + 1
 			
 			if (lineNum == totalLines)
-				stop
+				break
 		}
 	}
-	stop
+	return
 }
 
 macro byu_goto_first_item ()
@@ -754,7 +912,6 @@ macro byu_goto_first_item ()
 		curLine = curLine - 1
 	}
 
-	stop
 }
 
 // TODO:
@@ -810,13 +967,9 @@ macro byu_mark_this_line ()
 	var l
 	l = strlen(padding)
 	
-	macrosName = "byu_macros.EM"
+	macrosName = byu_get_bookmarks_file_name()
 	
-	handle = OpenBuf(macrosName)
-	if (handle == hNil) {
-		Msg("file @macrosName@ doesn't exist")
-		handle = NewBuf(macrosName)
-	}
+	handle = byu_open_or_create(macrosName)
 
 	buf = GetCurrentBuf()
 	fileName = GetBufName(buf)
@@ -853,6 +1006,286 @@ macro byu_mark_this_line ()
 	stop
 }
 
+macro byu_mark_group_start()
+{
+	var buf
+	buf = GetCurrentBuf()
+
+	if (!byu_check_for_position_file(buf))
+		stop
+
+	byu_cur_record_lines(1) // goto the head of current record
+
+	var grpToken
+	grpToken = byu_get_group_token()
+
+	var lineNum
+	lineNum = GetBufLnCur(buf)
+	
+	global grpStart
+	grpStart = lineNum
+	
+	InsBufLine(buf, lineNum, grpToken)
+
+	var rightChars
+	rightChars = strlen("<macro ")
+	while (rightChars > 0)
+	{
+		Cursor_Right
+		rightChars = rightChars - 1
+	}
+	stop
+}
+
+macro byu_get_indent_level(line)
+{
+	var len
+	len = strlen(line)
+	var i
+	i = 0
+	var level
+	level = 0
+	while(i < len)
+	{
+		if (line[i] == "\t" && line[i + 1] == "\t")
+			level = level + 1
+		else
+			break
+		i = i + 2
+	}
+
+	return level
+}
+
+macro byu_is_group_end(recordHeadLine)
+{
+	var groupToken
+	groupToken = byu_get_group_end_token()
+	var str
+	recordHeadLine = byu_skip_whitespace(recordHeadLine)
+		
+	//str = strtrunc(recordHeadLine, strlen(groupToken))
+	if (recordHeadLine == groupToken)
+		return True
+	else
+		return False
+}
+
+macro byu_indent_item_internal (left)
+{
+	var buf
+	buf = GetCurrentBuf()
+
+	if (!byu_check_for_position_file(buf))
+		stop
+
+	byu_cur_record_lines(1)
+
+	var curLine
+	curLine = GetBufLnCur(buf)
+	//var rememberLine
+	//rememberLine = curLine
+	
+	var line
+	line = GetBufLine(buf, curLine)
+	var totalLines
+	totalLines = GetBufLineCount(buf)
+	var indentLevel
+	indentLevel = byu_get_indent_level(line)
+	
+	if (indentLevel == 0 && left)
+		stop
+	
+
+	while(!byu_test_str_start_with_padding(line) && curLine < totalLines)
+	{
+		if (left)
+			line = byu_skip_count(line, 2)
+		else
+			line = cat("\t\t", line)
+
+		PutBufLine(buf, curLine, line)
+		curLine = curLine + 1
+		line = GetBufLine(buf, curLine)
+	}
+	curLine = curLine + 2 // move forward to the start line of next record
+	
+	while (1)
+	{
+		var nextIndentLevel
+		//byu_goto_next_item()
+		//curLine = GetBufLnCur(buf)
+
+		if (curLine == totalLines)
+			break
+			
+		var tmp
+		line = GetBufLine(buf, curLine)
+		tmp = line
+		
+		nextIndentLevel = byu_get_indent_level(line)
+		if (nextIndentLevel <= indentLevel)
+			break
+
+		while(!byu_test_str_start_with_padding(line) && curLine < totalLines)
+		{
+			if (left)
+				line = byu_skip_count(line, 2)
+			else
+				line = cat("\t\t", line)
+
+			PutBufLine(buf, curLine, line)
+			curLine = curLine + 1
+			if (curLine == totalLines)
+				break
+			line = GetBufLine(buf, curLine)
+		}
+
+		if (byu_is_group_end(tmp))
+			break	
+			
+		curLine = curLine + byu_get_record_lines_at(curLine)
+	}
+
+	SaveBuf(buf)
+	//byu_goto_line(rememberLine)
+	stop
+}
+
+macro byu_indent_item_left()
+{
+	byu_indent_item_internal(1)
+}
+
+macro byu_indent_item_right()
+{
+	byu_indent_item_internal(0)
+}
+
+macro byu_mark_group_end()
+{
+	
+	var buf
+	buf = GetCurrentBuf()
+	if (!byu_check_for_position_file(buf))
+		stop
+		
+	global grpStart
+	if (grpStart == "" || grpStart == -1)
+	{
+		Msg("group setting should be in pair!")
+		stop
+	}
+
+	var grpName
+	grpName = byu_get_grp_name(GetBufLine(buf,grpStart))
+	if (grpName == "")
+		stop
+
+	byu_cur_record_lines(1) // goto the head of current record
+
+	var grpToken
+	grpToken = byu_get_group_end_token()
+	
+	var lineNum
+	lineNum = GetBufLnCur(buf)
+	InsBufLine(buf, lineNum, grpToken)
+/*	
+	global grpEnd
+	grpEnd = lineNum
+
+
+	while(lineNum > grpStart)
+	{
+		Cursor_Up
+		byu_cur_record_lines(1)
+		lineNum = GetBufLnCur(buf)
+	}
+	var recLines
+	recLines = byu_cur_record_lines(0)
+	byu_move_Cursor(recLines, 1)
+	//byu_goto_next_item()
+	lineNum = GetBufLnCur(buf)
+
+	var indent
+	indent = "\t\t"
+
+	var bufTotalLines
+	bufTotalLines = GetBufLineCount(buf)
+	
+	while (lineNum <= grpEnd)
+	{
+		var line
+		line = GetBufLine(buf, lineNum)
+		while(!byu_test_str_start_with_padding(line))
+		{
+			line = cat(indent, line)
+			PutBufLine(buf, lineNum, line)
+			Cursor_Down
+			lineNum = lineNum + 1
+			line = GetBufLine(buf, lineNum)
+		}
+
+		//byu_move_cursor_downlevel(buf)
+		while (byu_test_str_start_with_padding(line) && lineNum < bufTotalLines)
+		{
+			Cursor_Down
+			lineNum = lineNum + 1
+			if (lineNum == bufTotalLines)
+				break
+			line = GetBufLine(buf, lineNum)
+		}
+		
+		indent = cat(indent, indent) // deep one more level
+		lineNum = GetBufLnCur(buf)
+	}
+
+	byu_move_cursor_uplevel(buf)
+*/
+	SaveBuf(buf)
+	grpStart = -1
+	grpEnd = -1
+	
+	stop
+}
+
+macro byu_clear_buf(buf)
+{
+	var lines
+	lines = GetBufLineCount(buf)
+	while(lines > 0)
+	{
+		DelBufLine(buf, 0)
+		lines = lines - 1
+	}
+}
+
+macro byu_show_grps ()
+{
+	var showBuf
+	showBuf = byu_open_or_create(byu_get_bookmarks_group_file_name())
+	byu_clear_buf(showBuf)
+	
+	var bookmarksBuf
+	bookmarksBuf = byu_open_or_create(byu_get_bookmarks_file_name())
+	var i 
+	i = 0
+	var lines
+	lines = GetBufLineCount(bookmarksBuf)
+
+	while (i < lines)
+	{
+		var line
+		line = GetBufLine(bookmarksBuf, i)
+		if (byu_str_starts_with(line, "<macro ") && line != "<macro end>")
+			byu_add_grp(byu_get_grp_name(line), i)
+
+		i = i + 1
+	}
+
+	SaveBuf(showBuf)
+	SetCurrentBuf(showBuf)
+}
 /*------------------- following function doesn't work :( ---------------------------------*/
 
 macro byu_wnd_buf_has_bm (f) 
